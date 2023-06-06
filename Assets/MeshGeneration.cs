@@ -1,16 +1,16 @@
-using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
-using UnityEditor.Experimental.GraphView;
 using UnityEngine;
 using static FastNoiseLite;
 
 public class MeshGeneration : MonoBehaviour
 {
     public int sizeMesh = 30;
+    public float sizePolygon = 1f;
     public int sizeChunks = 6;
     public int globalSeed = 0;
-    public int maxTrees = 30;
+    public float yWater = 0;
+	public int maxTrees = 30;
     public GameObject[] prefabTrees;
     public List<NoiseSetup> noisesSetup = new List<NoiseSetup>();
     public MeshFilter[] chunks;
@@ -67,11 +67,14 @@ public class MeshGeneration : MonoBehaviour
             });
             trees.Clear();
         }
-        foreach (var chunk in chunks)
+        if (chunks != null)
         {
-            if (chunk != null)
+            foreach (var chunk in chunks)
             {
-                DestroyImmediate(chunk.gameObject);
+                if (chunk != null)
+                {
+                    DestroyImmediate(chunk.gameObject);
+                }
             }
         }
         chunks = null;
@@ -90,6 +93,7 @@ public class MeshGeneration : MonoBehaviour
             });
             trees.Clear();
         }
+        RaycastHit hit;
         while (trees.Count <= maxTrees)
         {
             var chunk = chunks[Random.Range(0, chunks.Length - 1)];
@@ -98,6 +102,12 @@ public class MeshGeneration : MonoBehaviour
             {
                 var tree = Instantiate(prefabTrees[Random.Range(0, prefabTrees.Length - 1)], chunk.mesh.vertices[rand] + chunk.transform.position - Vector3.up * 0.3f, Quaternion.identity);
                 tree.transform.SetParent(transform, false);
+                tree.transform.localScale = Vector3.one * Random.Range(1f, 1.5f);
+                if (Physics.Raycast(chunk.mesh.vertices[rand] + chunk.transform.position + Vector3.up * 5, Vector3.down * 10, out hit))
+                {
+                    tree.transform.localEulerAngles = hit.point.normalized;
+                }
+                tree.transform.Rotate(Vector3.up, Random.Range(0, 360));
                 trees.Add(tree);
             }
         }
@@ -113,11 +123,7 @@ public class MeshGeneration : MonoBehaviour
         {
             currentSeed = globalSeed;
         }
-
-        if (chunks?.Length > 0 && chunks.Length != sizeChunks * sizeChunks)
-        {
-            ClearChunks();
-        }
+        ClearChunks();
 
         if (chunks?.Length == 0 || chunks == null)
         {
@@ -129,8 +135,9 @@ public class MeshGeneration : MonoBehaviour
                 {
                     GameObject gmj = new GameObject("Chunk");
                     gmj.transform.SetParent(transform, false);
+                    gmj.AddComponent<MeshCollider>();
                     gmj.AddComponent<MeshRenderer>().material = material;
-                    gmj.transform.position = new Vector3(x * sizeMesh ,0 ,z * sizeMesh);
+                    gmj.transform.position = new Vector3(x * sizeMesh * sizePolygon ,0 ,z * sizeMesh * sizePolygon);
                     chunks[chn] = gmj.AddComponent<MeshFilter>();
                     chn++;
                 }
@@ -148,22 +155,24 @@ public class MeshGeneration : MonoBehaviour
                 var vertices = new Vector3[(sizeMesh + 1) * (sizeMesh + 1)];
                 var triangles = new int[sizeMesh * sizeMesh * 6];
                 var uv = new Vector2[vertices.Length];
-                var colors = new List<Color>();
+                var colors = new Color[vertices.Length];
+                var noise = new FastNoiseLite();
+                noise.SetFrequency(0.05f);
 
                 for (int i = 0, z = 0; z <= sizeMesh; z++)
                 {
                     for (int x = 0; x <= sizeMesh; x++)
                     {
                         Vector3 pos = currentChunk.transform.position;
-                        float height = GetNoise(pos.x + x, pos.z + z);
-                        vertices[i] = new Vector3(x, height, z);
-                        if (height < 5)
+                        float height = GetNoise(pos.x + x * sizePolygon, pos.z + z * sizePolygon);
+                        vertices[i] = new Vector3(x * sizePolygon, height, z * sizePolygon);
+                        if (height < yWater + noise.GetNoise(pos.x + x * sizePolygon, pos.z + z * sizePolygon))
                         {
-                            colors.Add(Color.blue);
+                            colors[i] = Color.blue;
                         }
                         else
                         {
-                            colors.Add(Color.red);
+                            colors[i] = Color.red;
                         }
                         uv[i] = new Vector2((float)x / sizeMesh, (float)z / sizeMesh);
                         i++;
@@ -187,7 +196,7 @@ public class MeshGeneration : MonoBehaviour
                 mesh.colors = colors.ToArray();
                 mesh.RecalculateBounds();
                 mesh.RecalculateNormals();
-
+                currentChunk.GetComponent<MeshCollider>().sharedMesh = mesh;
                 currentChunk.sharedMesh = mesh;
                 indexChunk++;
             }

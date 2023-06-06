@@ -17,9 +17,9 @@ public class MeshHelper : Editor
         base.OnInspectorGUI();
         if (GUI.changed)
         {
-            serializedObject.ApplyModifiedProperties();
-            MeshGeneration meshGeneration = (MeshGeneration)target;
-            meshGeneration.Generation();
+            //serializedObject.ApplyModifiedProperties();
+            //MeshGeneration meshGeneration = (MeshGeneration)target;
+            //meshGeneration.Generation();
         }
     }
 }
