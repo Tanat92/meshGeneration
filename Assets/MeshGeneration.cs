@@ -1,5 +1,6 @@
 using System.Collections;
 using System.Collections.Generic;
+using System.Linq;
 using UnityEditor.Experimental.GraphView;
 using UnityEngine;
 using static FastNoiseLite;
@@ -9,9 +10,14 @@ public class MeshGeneration : MonoBehaviour
     public int sizeMesh = 30;
     public int sizeChunks = 6;
     public int globalSeed = 0;
+    public int maxTrees = 30;
+    public GameObject[] prefabTrees;
     public List<NoiseSetup> noisesSetup = new List<NoiseSetup>();
     public MeshFilter[] chunks;
     public Material material;
+
+    private int currentSeed;
+    private List<GameObject> trees = new List<GameObject>();
 
     public enum MathType
     {
@@ -29,22 +35,38 @@ public class MeshGeneration : MonoBehaviour
         public FractalType fractalType;
         public NoiseType noiseType;
         public DomainWarpType domainWarpType;
+        public List<NoiseSetup> addNoises;
         [Range(0.0f, 0.1f)]
         public float frequency;
         [Range(0.0f, 100.0f)]
         public float addHeight;
         [Range(0.0f, 100.0f)]
         public float gain;
-        [Range(0, 9)]
+        [Range(1, 9)]
         public int octave;
         [Range(0, 99999)]
         public int seed;
         public MathType mathType;
+        [Range(-100f, 100f)]
+        public float yMax;
+        [Range(-100f, 100f)]
+        public float yMin;
     }
 
     [ContextMenu("Clear Chunks")]
     public void ClearChunks()
     {
+        if (trees.Any())
+        {
+            trees.ForEach(t =>
+            {
+                if (t != null)
+                {
+                    DestroyImmediate(t);
+                }
+            });
+            trees.Clear();
+        }
         foreach (var chunk in chunks)
         {
             if (chunk != null)
@@ -55,11 +77,41 @@ public class MeshGeneration : MonoBehaviour
         chunks = null;
     }
 
+    private void TreeGeneration()
+    {
+        if (trees.Any())
+        {
+            trees.ForEach(t =>
+            {
+                if (t != null)
+                {
+                    DestroyImmediate(t);
+                }
+            });
+            trees.Clear();
+        }
+        while (trees.Count <= maxTrees)
+        {
+            var chunk = chunks[Random.Range(0, chunks.Length - 1)];
+            int rand = Random.Range(0, chunk.mesh.vertices.Length - 1);
+            if (chunk.mesh.vertices[rand].y > 3)
+            {
+                var tree = Instantiate(prefabTrees[Random.Range(0, prefabTrees.Length - 1)], chunk.mesh.vertices[rand] + chunk.transform.position - Vector3.up * 0.3f, Quaternion.identity);
+                tree.transform.SetParent(transform, false);
+                trees.Add(tree);
+            }
+        }
+    }
+
     [ContextMenu("Generation")]
     public void Generation() {
         if (globalSeed == 0)
         {
-            globalSeed = Random.Range(-99999, 99999);
+            currentSeed = Random.Range(-99999, 99999);
+        }
+        else
+        {
+            currentSeed = globalSeed;
         }
 
         if (chunks?.Length > 0 && chunks.Length != sizeChunks * sizeChunks)
@@ -96,6 +148,7 @@ public class MeshGeneration : MonoBehaviour
                 var vertices = new Vector3[(sizeMesh + 1) * (sizeMesh + 1)];
                 var triangles = new int[sizeMesh * sizeMesh * 6];
                 var uv = new Vector2[vertices.Length];
+                var colors = new List<Color>();
 
                 for (int i = 0, z = 0; z <= sizeMesh; z++)
                 {
@@ -104,6 +157,14 @@ public class MeshGeneration : MonoBehaviour
                         Vector3 pos = currentChunk.transform.position;
                         float height = GetNoise(pos.x + x, pos.z + z);
                         vertices[i] = new Vector3(x, height, z);
+                        if (height < 5)
+                        {
+                            colors.Add(Color.blue);
+                        }
+                        else
+                        {
+                            colors.Add(Color.red);
+                        }
                         uv[i] = new Vector2((float)x / sizeMesh, (float)z / sizeMesh);
                         i++;
                     }
@@ -123,6 +184,7 @@ public class MeshGeneration : MonoBehaviour
                 mesh.vertices = vertices;
                 mesh.triangles = triangles;
                 mesh.uv = uv;
+                mesh.colors = colors.ToArray();
                 mesh.RecalculateBounds();
                 mesh.RecalculateNormals();
 
@@ -130,13 +192,16 @@ public class MeshGeneration : MonoBehaviour
                 indexChunk++;
             }
         }
+
+        TreeGeneration();
     }
 
-    public float GetNoise(float x, float y)
+    public float GetNoise(float x, float y, List<NoiseSetup> noises = null)
     {
         float result = 0;
+        float add = 0;
         var fNoise = new FastNoiseLite();
-        noisesSetup.ForEach(noise =>
+        foreach (var noise in (noises != null ? noises : noisesSetup))
         {
             fNoise.SetNoiseType(noise.noiseType);
             fNoise.SetRotationType3D(noise.rotationType);
@@ -147,20 +212,29 @@ public class MeshGeneration : MonoBehaviour
             fNoise.SetFrequency(noise.frequency);
             fNoise.SetFractalGain(noise.gain);
             fNoise.SetFractalOctaves(noise.octave);
-            fNoise.SetSeed(noise.seed + globalSeed);
+            fNoise.SetSeed(noise.seed + currentSeed);
+            add = fNoise.GetNoise(x, y) * noise.addHeight;
+            if ((noise.yMax != 0 && noise.yMax < add) || (noise.yMin != 0 && noise.yMin > add))
+            {
+                continue;
+            }
+            if (noise.addNoises.Count > 0)
+            {
+                add *= GetNoise(x, y, noise.addNoises);
+            }
             switch (noise.mathType)
             {
                 case MathType.ADD:
-                    result += fNoise.GetNoise(x, y) * noise.addHeight;
+                    result += add;
                     break;
                 case MathType.MULTIPLY:
-                    result *= fNoise.GetNoise(x, y) * noise.addHeight;
+                    result *= add;
                     break;
                 case MathType.SUB:
-                    result -= fNoise.GetNoise(x, y) * noise.addHeight;
+                    result -= add;
                     break;
             }
-        });
+        };
         return result;
     }
 }
