@@ -11,13 +11,16 @@ public class MeshGeneration : MonoBehaviour
     public int globalSeed = 0;
     public float yWater = 0;
 	public int maxTrees = 30;
+	public int maxGrass = 30;
     public GameObject[] prefabTrees;
+    public GameObject prefabGrass;
     public List<NoiseSetup> noisesSetup = new List<NoiseSetup>();
     public MeshFilter[] chunks;
     public Material material;
 
     private int currentSeed;
     private List<GameObject> trees = new List<GameObject>();
+    private List<GameObject> grasses = new List<GameObject>();
 
     public enum MathType
     {
@@ -66,6 +69,17 @@ public class MeshGeneration : MonoBehaviour
                 }
             });
             trees.Clear();
+        }
+        if (grasses.Any())
+        {
+            grasses.ForEach(t =>
+            {
+                if (t != null)
+                {
+                    DestroyImmediate(t);
+                }
+            });
+            grasses.Clear();
         }
         if (chunks != null)
         {
@@ -158,6 +172,10 @@ public class MeshGeneration : MonoBehaviour
                 var colors = new Color[vertices.Length];
                 var noise = new FastNoiseLite();
                 noise.SetFrequency(0.05f);
+                var noiseStone = new FastNoiseLite();
+                noiseStone.SetFractalOctaves(4);
+                noiseStone.SetNoiseType(NoiseType.Cellular);
+                noiseStone.SetFrequency(0.4f);
 
                 for (int i = 0, z = 0; z <= sizeMesh; z++)
                 {
@@ -172,7 +190,14 @@ public class MeshGeneration : MonoBehaviour
                         }
                         else
                         {
-                            colors[i] = Color.red;
+                            if (noiseStone.GetNoise(pos.x + x * sizePolygon, pos.z + z * sizePolygon) > 0.6f)
+                            {
+                                colors[i] = Color.green;
+                            }
+                            else
+                            {
+                                colors[i] = Color.red;
+                            }
                         }
                         uv[i] = new Vector2((float)x / sizeMesh, (float)z / sizeMesh);
                         i++;
