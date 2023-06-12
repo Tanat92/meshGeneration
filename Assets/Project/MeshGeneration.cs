@@ -17,6 +17,8 @@ public class MeshGeneration : MonoBehaviour
     public List<NoiseSetup> noisesSetup = new List<NoiseSetup>();
     public MeshFilter[] chunks;
     public Material material;
+    public LayerMask layerMask;
+    public Transform player;
 
     private int currentSeed;
     private List<GameObject> trees = new List<GameObject>();
@@ -94,6 +96,25 @@ public class MeshGeneration : MonoBehaviour
         chunks = null;
     }
 
+    private void Update()
+    {
+        var size = sizePolygon * sizeMesh;
+        Vector3 centerChunkPlayer = new Vector3((int)(player.position.x / size) * size, 0, (int)(player.position.z / size) * size);
+        Vector3 centerChunk = new Vector3(sizeChunks / 2 * size, 0, sizeChunks / 2 * size);
+        int count = 0;
+        for (int z = 0; z < sizeChunks; z++)
+        {
+            for (int x = 0; x < sizeChunks; x++)
+            {
+                if (!chunks.Any(c => c.transform.position == centerChunkPlayer - centerChunk + new Vector3(size * x, 0, size * z)))
+                {
+                    count++;
+                }
+            }
+        }
+        Debug.Log(count);
+    }
+
     private void TreeGeneration()
     {
         if (trees.Any())
@@ -149,7 +170,14 @@ public class MeshGeneration : MonoBehaviour
                 {
                     GameObject gmj = new GameObject("Chunk");
                     gmj.transform.SetParent(transform, false);
+                    gmj.layer = layerMask;
                     gmj.AddComponent<MeshCollider>();
+                    var boxCollider = gmj.AddComponent<BoxCollider>();
+                    boxCollider.isTrigger = true;
+                    boxCollider.size = Vector3.one * sizeMesh * sizePolygon + Vector3.up * sizeMesh * sizePolygon * 2;
+                    boxCollider.center = Vector3.one * sizeMesh * sizePolygon / 2;
+                    var rb = gmj.AddComponent<Rigidbody>();
+                    rb.isKinematic = true;
                     gmj.AddComponent<MeshRenderer>().material = material;
                     gmj.transform.position = new Vector3(x * sizeMesh * sizePolygon ,0 ,z * sizeMesh * sizePolygon);
                     chunks[chn] = gmj.AddComponent<MeshFilter>();
@@ -227,7 +255,7 @@ public class MeshGeneration : MonoBehaviour
             }
         }
 
-        TreeGeneration();
+        //TreeGeneration();
     }
 
     public float GetNoise(float x, float y, List<NoiseSetup> noises = null)
@@ -270,5 +298,25 @@ public class MeshGeneration : MonoBehaviour
             }
         };
         return result;
+    }
+
+    private void OnDrawGizmos()
+    {
+        var size = sizePolygon * sizeMesh;
+        Vector3 centerChunkPlayer = new Vector3((int)(player.position.x / size) * size, 0, (int)(player.position.z / size) * size);
+        Vector3 centerChunk = new Vector3(sizeChunks / 2 * size, 0, sizeChunks / 2 * size);
+        Gizmos.color = Color.red;
+        for (int z = 0; z < sizeChunks; z++)
+        {
+            for (int x = 0; x < sizeChunks; x++)
+            {
+                Gizmos.DrawWireCube(centerChunkPlayer - centerChunk + new Vector3(size * x, 0, size * z) + (Vector3.one * size) / 2, Vector3.one * size);
+            }
+        }
+        Gizmos.color = Color.blue;
+        foreach (var chunk in chunks)
+        {
+            Gizmos.DrawWireCube(chunk.transform.position + (Vector3.one * size) / 2, Vector3.one * size + Vector3.up * size * 2);
+        }
     }
 }
