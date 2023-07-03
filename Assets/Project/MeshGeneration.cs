@@ -1,5 +1,7 @@
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 using UnityEngine;
 using static FastNoiseLite;
 
@@ -149,7 +151,7 @@ public class MeshGeneration : MonoBehaviour
     }
 
     [ContextMenu("Generation")]
-    public void Generation() {
+    public async void Generation() {
         if (globalSeed == 0)
         {
             currentSeed = Random.Range(-99999, 99999);
@@ -170,7 +172,7 @@ public class MeshGeneration : MonoBehaviour
                 {
                     GameObject gmj = new GameObject("Chunk");
                     gmj.transform.SetParent(transform, false);
-                    gmj.layer = layerMask;
+                    //gmj.layer = layerMask;
                     gmj.AddComponent<MeshCollider>();
                     var boxCollider = gmj.AddComponent<BoxCollider>();
                     boxCollider.isTrigger = true;
@@ -185,68 +187,51 @@ public class MeshGeneration : MonoBehaviour
                 }
             }
         }
-
         var indexChunk = 0;
+        var chunksList = new List<ChunkData>();
+        int count = 0;
+
+        using (var resetEvent = new ManualResetEvent(false))
+        {
+            for (int zChunk = 0; zChunk < sizeChunks; zChunk++)
+            {
+                for (int xChunk = 0; xChunk < sizeChunks; xChunk++)
+                {
+                    var currentChunk = chunks[indexChunk];
+                    var chunk = new ChunkData();
+                    chunksList.Add(chunk);
+                    var index = indexChunk;
+                    var pos = currentChunk.transform.position;
+                    ThreadPool.QueueUserWorkItem(o =>
+                    {
+                        CreateChunk(chunk, pos);
+                        lock (chunksList)
+                        {
+                            chunksList[index] = chunk;
+                        }
+                        if (Interlocked.Increment(ref count) >= sizeChunks * sizeChunks)
+                        {
+                            resetEvent.Set();
+                        }
+                    });
+                    indexChunk++;
+                }
+            }
+            resetEvent.WaitOne();
+        }
+
+        indexChunk = 0;
         for (int zChunk = 0; zChunk < sizeChunks; zChunk++)
         {
             for (int xChunk = 0; xChunk < sizeChunks; xChunk++)
             {
                 var currentChunk = chunks[indexChunk];
-
+                var chunk = chunksList[indexChunk];
                 var mesh = new Mesh();
-                var vertices = new Vector3[(sizeMesh + 1) * (sizeMesh + 1)];
-                var triangles = new int[sizeMesh * sizeMesh * 6];
-                var uv = new Vector2[vertices.Length];
-                var colors = new Color[vertices.Length];
-                var noise = new FastNoiseLite();
-                noise.SetFrequency(0.05f);
-                var noiseStone = new FastNoiseLite();
-                noiseStone.SetFractalOctaves(4);
-                noiseStone.SetNoiseType(NoiseType.Cellular);
-                noiseStone.SetFrequency(0.4f);
-
-                for (int i = 0, z = 0; z <= sizeMesh; z++)
-                {
-                    for (int x = 0; x <= sizeMesh; x++)
-                    {
-                        Vector3 pos = currentChunk.transform.position;
-                        float height = GetNoise(pos.x + x * sizePolygon, pos.z + z * sizePolygon);
-                        vertices[i] = new Vector3(x * sizePolygon, height, z * sizePolygon);
-                        if (height < yWater + noise.GetNoise(pos.x + x * sizePolygon, pos.z + z * sizePolygon))
-                        {
-                            colors[i] = Color.blue;
-                        }
-                        else
-                        {
-                            if (noiseStone.GetNoise(pos.x + x * sizePolygon, pos.z + z * sizePolygon) > 0.6f)
-                            {
-                                colors[i] = Color.green;
-                            }
-                            else
-                            {
-                                colors[i] = Color.red;
-                            }
-                        }
-                        uv[i] = new Vector2((float)x / sizeMesh, (float)z / sizeMesh);
-                        i++;
-                    }
-                }
-
-                for (int ti = 0, vi = 0, y = 0; y < sizeMesh; y++, vi++)
-                {
-                    for (int x = 0; x < sizeMesh; x++, ti += 6, vi++)
-                    {
-                        triangles[ti] = vi;
-                        triangles[ti + 3] = triangles[ti + 2] = vi + 1;
-                        triangles[ti + 4] = triangles[ti + 1] = vi + sizeMesh + 1;
-                        triangles[ti + 5] = vi + sizeMesh + 2;
-                    }
-                }
-
-                mesh.vertices = vertices;
-                mesh.triangles = triangles;
-                mesh.uv = uv;
-                mesh.colors = colors.ToArray();
+                mesh.vertices = chunk.vertices;
+                mesh.triangles = chunk.triangles;
+                mesh.uv = chunk.uv;
+                mesh.colors = chunk.colors.ToArray();
                 mesh.RecalculateBounds();
                 mesh.RecalculateNormals();
                 currentChunk.GetComponent<MeshCollider>().sharedMesh = mesh;
@@ -319,4 +304,67 @@ public class MeshGeneration : MonoBehaviour
             Gizmos.DrawWireCube(chunk.transform.position + (Vector3.one * size) / 2, Vector3.one * size + Vector3.up * size * 2);
         }
     }
+
+    public void CreateChunk(ChunkData chunk, Vector3 pos)
+    {
+        var vertices = new Vector3[(sizeMesh + 1) * (sizeMesh + 1)];
+        var triangles = new int[sizeMesh * sizeMesh * 6];
+        var uv = new Vector2[vertices.Length];
+        var colors = new Color[vertices.Length];
+        var noise = new FastNoiseLite();
+        noise.SetFrequency(0.05f);
+        var noiseStone = new FastNoiseLite();
+        noiseStone.SetFractalOctaves(4);
+        noiseStone.SetNoiseType(NoiseType.Cellular);
+        noiseStone.SetFrequency(0.4f);
+
+        for (int i = 0, z = 0; z <= sizeMesh; z++)
+        {
+            for (int x = 0; x <= sizeMesh; x++)
+            {
+                float height = GetNoise(pos.x + x * sizePolygon, pos.z + z * sizePolygon);
+                vertices[i] = new Vector3(x * sizePolygon, height, z * sizePolygon);
+                if (height < yWater + noise.GetNoise(pos.x + x * sizePolygon, pos.z + z * sizePolygon))
+                {
+                    colors[i] = Color.blue;
+                }
+                else
+                {
+                    if (noiseStone.GetNoise(pos.x + x * sizePolygon, pos.z + z * sizePolygon) > 0.6f)
+                    {
+                        colors[i] = Color.green;
+                    }
+                    else
+                    {
+                        colors[i] = Color.red;
+                    }
+                }
+                uv[i] = new Vector2((float)x / sizeMesh, (float)z / sizeMesh);
+                i++;
+            }
+        }
+
+        for (int ti = 0, vi = 0, y = 0; y < sizeMesh; y++, vi++)
+        {
+            for (int x = 0; x < sizeMesh; x++, ti += 6, vi++)
+            {
+                triangles[ti] = vi;
+                triangles[ti + 3] = triangles[ti + 2] = vi + 1;
+                triangles[ti + 4] = triangles[ti + 1] = vi + sizeMesh + 1;
+                triangles[ti + 5] = vi + sizeMesh + 2;
+            }
+        }
+        chunk.vertices = vertices;
+        chunk.triangles = triangles;
+        chunk.uv = uv;
+        chunk.colors = colors;
+    }
+}
+
+public class ChunkData
+{
+    public Vector3[] vertices;
+    public int[] triangles;
+    public Vector2[] uv;
+    public Color[] colors;
 }
