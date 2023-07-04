@@ -1,11 +1,12 @@
+using System.Collections;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using UnityEngine;
-using static FastNoiseLite;
 
-public class MeshGeneration : MonoBehaviour
+public partial class MeshGeneration : MonoBehaviour
 {
     public int sizeMesh = 30;
     public float sizePolygon = 1f;
@@ -17,14 +18,18 @@ public class MeshGeneration : MonoBehaviour
     public GameObject[] prefabTrees;
     public GameObject prefabGrass;
     public List<NoiseSetup> noisesSetup = new List<NoiseSetup>();
-    public MeshFilter[] chunks;
+    public Dictionary<Vector3, MeshFilter> chunks = new Dictionary<Vector3, MeshFilter>();
     public Material material;
     public LayerMask layerMask;
     public Transform player;
 
+    public bool isGeneration = false;
+
     private int currentSeed;
-    private List<GameObject> trees = new List<GameObject>();
     private List<GameObject> grasses = new List<GameObject>();
+
+    private List<Vector3> farChunks = new List<Vector3>();
+    private List<Vector3> newChunks = new List<Vector3>();
 
     public enum MathType
     {
@@ -33,119 +38,55 @@ public class MeshGeneration : MonoBehaviour
         SUB = 2
     }
 
-    [System.Serializable]
-    public struct NoiseSetup
-    {
-        public RotationType3D rotationType;
-        public CellularDistanceFunction cellularDistanceFunction;
-        public CellularReturnType cellularReturnType;
-        public FractalType fractalType;
-        public NoiseType noiseType;
-        public DomainWarpType domainWarpType;
-        public List<NoiseSetup> addNoises;
-        [Range(0.0f, 0.1f)]
-        public float frequency;
-        [Range(0.0f, 100.0f)]
-        public float addHeight;
-        [Range(0.0f, 100.0f)]
-        public float gain;
-        [Range(1, 9)]
-        public int octave;
-        [Range(0, 99999)]
-        public int seed;
-        public MathType mathType;
-        [Range(-100f, 100f)]
-        public float yMax;
-        [Range(-100f, 100f)]
-        public float yMin;
-    }
-
     [ContextMenu("Clear Chunks")]
     public void ClearChunks()
     {
-        if (trees.Any())
+        if (transform.childCount != 0)
         {
-            trees.ForEach(t =>
+            while (transform.childCount != 0)
             {
-                if (t != null)
-                {
-                    DestroyImmediate(t);
-                }
-            });
-            trees.Clear();
-        }
-        if (grasses.Any())
-        {
-            grasses.ForEach(t =>
-            {
-                if (t != null)
-                {
-                    DestroyImmediate(t);
-                }
-            });
-            grasses.Clear();
-        }
-        if (chunks != null)
-        {
-            foreach (var chunk in chunks)
-            {
-                if (chunk != null)
-                {
-                    DestroyImmediate(chunk.gameObject);
-                }
+                DestroyImmediate(transform.GetChild(0).gameObject);
             }
         }
-        chunks = null;
+        chunks.Clear();
+    }
+
+    private void Start()
+    {
+        Generation();
     }
 
     private void Update()
     {
-        var size = sizePolygon * sizeMesh;
-        Vector3 centerChunkPlayer = new Vector3((int)(player.position.x / size) * size, 0, (int)(player.position.z / size) * size);
-        Vector3 centerChunk = new Vector3(sizeChunks / 2 * size, 0, sizeChunks / 2 * size);
-        int count = 0;
-        for (int z = 0; z < sizeChunks; z++)
+        if (!isGeneration)
         {
-            for (int x = 0; x < sizeChunks; x++)
+            var size = sizePolygon * sizeMesh;
+            Vector3 centerChunkPlayer = new Vector3((int)(player.position.x / size) * size, 0, (int)(player.position.z / size) * size);
+            Vector3 centerChunk = new Vector3(sizeChunks / 2 * size, 0, sizeChunks / 2 * size);
+            int count = 0;
+            var lf = new List<Vector3>();
+            var ln = new List<Vector3>();
+            for (int z = 0; z < sizeChunks; z++)
             {
-                if (!chunks.Any(c => c.transform.position == centerChunkPlayer - centerChunk + new Vector3(size * x, 0, size * z)))
+                for (int x = 0; x < sizeChunks; x++)
                 {
-                    count++;
+                    if (!chunks.ContainsKey(centerChunkPlayer - centerChunk + new Vector3(size * x, 0, size * z)))
+                    {
+                        ln.Add(centerChunkPlayer - centerChunk + new Vector3(size * x, 0, size * z));
+                        count++;
+                    }
+                    else
+                    {
+                        lf.Add(centerChunkPlayer - centerChunk + new Vector3(size * x, 0, size * z));
+                        count++;
+                    }
                 }
             }
-        }
-        Debug.Log(count);
-    }
-
-    private void TreeGeneration()
-    {
-        if (trees.Any())
-        {
-            trees.ForEach(t =>
+            if (ln.Count > 0)
             {
-                if (t != null)
-                {
-                    DestroyImmediate(t);
-                }
-            });
-            trees.Clear();
-        }
-        RaycastHit hit;
-        while (trees.Count <= maxTrees)
-        {
-            var chunk = chunks[Random.Range(0, chunks.Length - 1)];
-            int rand = Random.Range(0, chunk.mesh.vertices.Length - 1);
-            if (chunk.mesh.vertices[rand].y > 3)
-            {
-                var tree = Instantiate(prefabTrees[Random.Range(0, prefabTrees.Length - 1)], chunk.mesh.vertices[rand] + chunk.transform.position - Vector3.up * 0.3f, Quaternion.identity);
-                tree.transform.SetParent(transform, false);
-                tree.transform.localScale = Vector3.one * Random.Range(1f, 1.5f);
-                if (Physics.Raycast(chunk.mesh.vertices[rand] + chunk.transform.position + Vector3.up * 5, Vector3.down * 10, out hit))
-                {
-                    tree.transform.localEulerAngles = hit.point.normalized;
-                }
-                tree.transform.Rotate(Vector3.up, Random.Range(0, 360));
-                trees.Add(tree);
+                newChunks = ln;
+                farChunks = chunks.Where(a => !lf.Contains(a.Key)).Select(a => a.Key).ToList();
+                GenerationNewChunk();
             }
         }
     }
@@ -162,9 +103,8 @@ public class MeshGeneration : MonoBehaviour
         }
         ClearChunks();
 
-        if (chunks?.Length == 0 || chunks == null)
+        if (chunks?.Count == 0 || chunks == null)
         {
-            chunks = new MeshFilter[sizeChunks * sizeChunks];
             int chn = 0;
             for (int z = 0; z < sizeChunks; z++)
             {
@@ -174,21 +114,17 @@ public class MeshGeneration : MonoBehaviour
                     gmj.transform.SetParent(transform, false);
                     //gmj.layer = layerMask;
                     gmj.AddComponent<MeshCollider>();
-                    var boxCollider = gmj.AddComponent<BoxCollider>();
-                    boxCollider.isTrigger = true;
-                    boxCollider.size = Vector3.one * sizeMesh * sizePolygon + Vector3.up * sizeMesh * sizePolygon * 2;
-                    boxCollider.center = Vector3.one * sizeMesh * sizePolygon / 2;
                     var rb = gmj.AddComponent<Rigidbody>();
                     rb.isKinematic = true;
                     gmj.AddComponent<MeshRenderer>().material = material;
                     gmj.transform.position = new Vector3(x * sizeMesh * sizePolygon ,0 ,z * sizeMesh * sizePolygon);
-                    chunks[chn] = gmj.AddComponent<MeshFilter>();
+                    chunks[gmj.transform.position] = gmj.AddComponent<MeshFilter>();
                     chn++;
                 }
             }
         }
         var indexChunk = 0;
-        var chunksList = new List<ChunkData>();
+        var chunksList = new List<Chunk>();
         int count = 0;
 
         using (var resetEvent = new ManualResetEvent(false))
@@ -197,14 +133,13 @@ public class MeshGeneration : MonoBehaviour
             {
                 for (int xChunk = 0; xChunk < sizeChunks; xChunk++)
                 {
-                    var currentChunk = chunks[indexChunk];
-                    var chunk = new ChunkData();
+                    var pos = new Vector3(xChunk * sizeMesh * sizePolygon, 0, zChunk * sizeMesh * sizePolygon);
+                    var chunk = new Chunk(sizeMesh, yWater, sizePolygon, currentSeed, noisesSetup);
                     chunksList.Add(chunk);
                     var index = indexChunk;
-                    var pos = currentChunk.transform.position;
                     ThreadPool.QueueUserWorkItem(o =>
                     {
-                        CreateChunk(chunk, pos);
+                        chunk = chunk.CreateChunk(pos);
                         lock (chunksList)
                         {
                             chunksList[index] = chunk;
@@ -225,13 +160,14 @@ public class MeshGeneration : MonoBehaviour
         {
             for (int xChunk = 0; xChunk < sizeChunks; xChunk++)
             {
-                var currentChunk = chunks[indexChunk];
+                var pos = new Vector3(xChunk * sizeMesh * sizePolygon, 0, zChunk * sizeMesh * sizePolygon);
+                var currentChunk = chunks[pos];
                 var chunk = chunksList[indexChunk];
                 var mesh = new Mesh();
                 mesh.vertices = chunk.vertices;
                 mesh.triangles = chunk.triangles;
                 mesh.uv = chunk.uv;
-                mesh.colors = chunk.colors.ToArray();
+                mesh.colors = chunk.colors;
                 mesh.RecalculateBounds();
                 mesh.RecalculateNormals();
                 currentChunk.GetComponent<MeshCollider>().sharedMesh = mesh;
@@ -239,51 +175,71 @@ public class MeshGeneration : MonoBehaviour
                 indexChunk++;
             }
         }
-
-        //TreeGeneration();
     }
 
-    public float GetNoise(float x, float y, List<NoiseSetup> noises = null)
+    private void GenerationNewChunk()
     {
-        float result = 0;
-        float add = 0;
-        var fNoise = new FastNoiseLite();
-        foreach (var noise in (noises != null ? noises : noisesSetup))
+        isGeneration = true;
+        var list = new ConcurrentDictionary<MeshFilter, Chunk>();
+        var max = 0;
+
+        foreach (var chunkPos in newChunks)
         {
-            fNoise.SetNoiseType(noise.noiseType);
-            fNoise.SetRotationType3D(noise.rotationType);
-            fNoise.SetDomainWarpType(noise.domainWarpType);
-            fNoise.SetFractalType(noise.fractalType);
-            fNoise.SetCellularReturnType(noise.cellularReturnType);
-            fNoise.SetCellularDistanceFunction(noise.cellularDistanceFunction);
-            fNoise.SetFrequency(noise.frequency);
-            fNoise.SetFractalGain(noise.gain);
-            fNoise.SetFractalOctaves(noise.octave);
-            fNoise.SetSeed(noise.seed + currentSeed);
-            add = fNoise.GetNoise(x, y) * noise.addHeight;
-            if ((noise.yMax != 0 && noise.yMax < add) || (noise.yMin != 0 && noise.yMin > add))
+            var farChunkPos = farChunks.First();
+            var mf = chunks[farChunkPos];
+            mf.gameObject.SetActive(false);
+            chunks.Remove(farChunkPos);
+            chunks[chunkPos] = mf;
+            mf.transform.position = chunkPos;
+            farChunks.Remove(farChunkPos);
+
+            Chunk chunk = new Chunk(sizeMesh, yWater, sizePolygon, currentSeed, noisesSetup);
+
+            ThreadPool.QueueUserWorkItem(o =>
             {
-                continue;
-            }
-            if (noise.addNoises.Count > 0)
-            {
-                add *= GetNoise(x, y, noise.addNoises);
-            }
-            switch (noise.mathType)
-            {
-                case MathType.ADD:
-                    result += add;
-                    break;
-                case MathType.MULTIPLY:
-                    result *= add;
-                    break;
-                case MathType.SUB:
-                    result -= add;
-                    break;
-            }
-        };
-        return result;
+                list[mf] = chunk.CreateChunk(chunkPos);
+            });
+            max++;
+        }
+
+        StartCoroutine(Test(list, max));
     }
+
+    IEnumerator Test(ConcurrentDictionary<MeshFilter, Chunk> list, int max)
+    {
+        var count = 0;
+        while (count != max )
+        {
+            if (list.Count > 0)
+            {
+                lock (list)
+                {
+                    var chn = list.First();
+                    if (chn.Key == null)
+                    {
+                        continue;
+                    }
+                    var pos = chn.Key.transform.position;
+                    var currentChunk = chunks[pos];
+                    var mesh = new Mesh();
+                    mesh.vertices = chn.Value.vertices;
+                    mesh.triangles = chn.Value.triangles;
+                    mesh.uv = chn.Value.uv;
+                    mesh.colors = chn.Value.colors.ToArray();
+                    mesh.RecalculateBounds();
+                    mesh.RecalculateNormals();
+                    currentChunk.GetComponent<MeshCollider>().sharedMesh = mesh;
+                    currentChunk.sharedMesh = mesh;
+                    chn.Key.gameObject.SetActive(true);
+                    list.Remove(chn.Key, out _);
+                    count++;
+                }
+            }
+            yield return new WaitForFixedUpdate();
+        }
+        yield return new WaitForFixedUpdate();
+        isGeneration = false;
+    } 
 
     private void OnDrawGizmos()
     {
@@ -299,72 +255,22 @@ public class MeshGeneration : MonoBehaviour
             }
         }
         Gizmos.color = Color.blue;
-        foreach (var chunk in chunks)
+        if (chunks != null)
         {
-            Gizmos.DrawWireCube(chunk.transform.position + (Vector3.one * size) / 2, Vector3.one * size + Vector3.up * size * 2);
-        }
-    }
-
-    public void CreateChunk(ChunkData chunk, Vector3 pos)
-    {
-        var vertices = new Vector3[(sizeMesh + 1) * (sizeMesh + 1)];
-        var triangles = new int[sizeMesh * sizeMesh * 6];
-        var uv = new Vector2[vertices.Length];
-        var colors = new Color[vertices.Length];
-        var noise = new FastNoiseLite();
-        noise.SetFrequency(0.05f);
-        var noiseStone = new FastNoiseLite();
-        noiseStone.SetFractalOctaves(4);
-        noiseStone.SetNoiseType(NoiseType.Cellular);
-        noiseStone.SetFrequency(0.4f);
-
-        for (int i = 0, z = 0; z <= sizeMesh; z++)
-        {
-            for (int x = 0; x <= sizeMesh; x++)
+            foreach (var chunk in chunks)
             {
-                float height = GetNoise(pos.x + x * sizePolygon, pos.z + z * sizePolygon);
-                vertices[i] = new Vector3(x * sizePolygon, height, z * sizePolygon);
-                if (height < yWater + noise.GetNoise(pos.x + x * sizePolygon, pos.z + z * sizePolygon))
-                {
-                    colors[i] = Color.blue;
-                }
-                else
-                {
-                    if (noiseStone.GetNoise(pos.x + x * sizePolygon, pos.z + z * sizePolygon) > 0.6f)
-                    {
-                        colors[i] = Color.green;
-                    }
-                    else
-                    {
-                        colors[i] = Color.red;
-                    }
-                }
-                uv[i] = new Vector2((float)x / sizeMesh, (float)z / sizeMesh);
-                i++;
+                Gizmos.DrawWireCube(chunk.Key + (Vector3.one * size) / 2, Vector3.one * size + Vector3.up * size * 2);
             }
         }
-
-        for (int ti = 0, vi = 0, y = 0; y < sizeMesh; y++, vi++)
+        Gizmos.color = Color.yellow;
+        foreach (var chunk in farChunks)
         {
-            for (int x = 0; x < sizeMesh; x++, ti += 6, vi++)
-            {
-                triangles[ti] = vi;
-                triangles[ti + 3] = triangles[ti + 2] = vi + 1;
-                triangles[ti + 4] = triangles[ti + 1] = vi + sizeMesh + 1;
-                triangles[ti + 5] = vi + sizeMesh + 2;
-            }
+            Gizmos.DrawWireCube(chunk + (Vector3.one * size) / 2, Vector3.one * size + Vector3.up * size * 2);
         }
-        chunk.vertices = vertices;
-        chunk.triangles = triangles;
-        chunk.uv = uv;
-        chunk.colors = colors;
+        Gizmos.color = Color.magenta;
+        foreach (var chunk in newChunks)
+        {
+            Gizmos.DrawWireCube(chunk + (Vector3.one * size) / 2, Vector3.one * size + Vector3.up * size * 2);
+        }
     }
-}
-
-public class ChunkData
-{
-    public Vector3[] vertices;
-    public int[] triangles;
-    public Vector2[] uv;
-    public Color[] colors;
 }
